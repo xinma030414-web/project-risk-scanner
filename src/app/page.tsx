@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 type Risk = {
-  id: string;
   title: string;
   description: string;
   category: string;
@@ -11,16 +10,6 @@ type Risk = {
   impact: number;
   score: number;
   level: string;
-};
-
-type Project = {
-  id: string;
-  description: string;
-  duration_weeks: number | null;
-  tech_complexity: string | null;
-  cross_team: boolean | null;
-  external_approval: boolean | null;
-  created_at: string;
 };
 
 export default function Home() {
@@ -32,29 +21,8 @@ export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [project, setProject] = useState<Project | null>(null);
   const [risks, setRisks] = useState<Risk[]>([]);
-
-  const fetchLatest = async () => {
-    try {
-      const res = await fetch("/api/latest");
-      const data = await res.json();
-      if (data.project) {
-        setProject(data.project);
-        setRisks(data.risks ?? []);
-      } else {
-        setProject(null);
-        setRisks([]);
-      }
-    } catch {
-      setProject(null);
-      setRisks([]);
-    }
-  };
-
-  useEffect(() => {
-    fetchLatest();
-  }, []);
+  const [summary, setSummary] = useState<string>("");
 
   const handleAnalyze = async () => {
     if (!description.trim() && !file) {
@@ -85,16 +53,18 @@ export default function Home() {
         return;
       }
 
-      const formData = new FormData();
-      formData.append("description", textToSend);
-      if (durationWeeks) formData.append("duration_weeks", durationWeeks);
-      if (techComplexity) formData.append("tech_complexity", techComplexity);
-      if (crossTeam !== "") formData.append("cross_team", String(crossTeam));
-      if (externalApproval !== "") formData.append("external_approval", String(externalApproval));
-
       const res = await fetch("/api/analyze", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description: textToSend,
+          meta: {
+            ...(durationWeeks && { duration_weeks: parseInt(durationWeeks, 10) }),
+            ...(techComplexity && { tech_complexity: techComplexity }),
+            ...(crossTeam !== "" && { cross_team: crossTeam }),
+            ...(externalApproval !== "" && { external_approval: externalApproval }),
+          },
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -102,8 +72,8 @@ export default function Home() {
         setError(msg);
         return;
       }
-      setProject(data.project);
       setRisks(data.risks ?? []);
+      setSummary(data.summary ?? "");
     } catch (e) {
       setError(e instanceof Error ? e.message : "请求失败");
     } finally {
@@ -135,7 +105,7 @@ export default function Home() {
           Project Risk Scanner – AI Execution Risk Analysis
         </h1>
         <p className="text-zinc-600 dark:text-zinc-400 mb-6">
-          输入项目描述，AI 生成 15 条风险，本地规则引擎打分并持久化；刷新后仍可查看最近一次结果。
+          输入项目描述或上传文件，AI 生成 15 条风险并本地打分（无状态，不持久化）。
         </p>
 
         <div className="space-y-4 mb-8">
@@ -227,11 +197,13 @@ export default function Home() {
           </div>
         </div>
 
-        {project && (
+        {risks.length > 0 && (
           <div className="space-y-8">
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              最近分析：{new Date(project.created_at).toLocaleString()}
-            </p>
+            {summary && (
+              <p className="text-sm text-zinc-600 dark:text-zinc-300 p-3 bg-zinc-100 dark:bg-zinc-800 rounded-lg">
+                {summary}
+              </p>
+            )}
 
             <section>
               <h2 className="text-lg font-semibold mb-3">Top 5 风险</h2>
@@ -250,7 +222,7 @@ export default function Home() {
                   </thead>
                   <tbody>
                     {top5.map((r, i) => (
-                      <tr key={r.id} className="border-t border-zinc-200 dark:border-zinc-700">
+                      <tr key={i} className="border-t border-zinc-200 dark:border-zinc-700">
                         <td className="p-3">{i + 1}</td>
                         <td className="p-3">{r.title}</td>
                         <td className="p-3">{r.category}</td>
@@ -276,8 +248,8 @@ export default function Home() {
                     低概率 · 低影响
                   </div>
                   <ul className="text-sm space-y-1">
-                    {matrix.lowP_lowI.map((r) => (
-                      <li key={r.id}>{r.title}</li>
+                    {matrix.lowP_lowI.map((r, i) => (
+                      <li key={i}>{r.title}</li>
                     ))}
                     {matrix.lowP_lowI.length === 0 && <li className="text-zinc-400">无</li>}
                   </ul>
@@ -287,8 +259,8 @@ export default function Home() {
                     高概率 · 低影响
                   </div>
                   <ul className="text-sm space-y-1">
-                    {matrix.highP_lowI.map((r) => (
-                      <li key={r.id}>{r.title}</li>
+                    {matrix.highP_lowI.map((r, i) => (
+                      <li key={i}>{r.title}</li>
                     ))}
                     {matrix.highP_lowI.length === 0 && <li className="text-zinc-400">无</li>}
                   </ul>
@@ -298,8 +270,8 @@ export default function Home() {
                     低概率 · 高影响
                   </div>
                   <ul className="text-sm space-y-1">
-                    {matrix.lowP_highI.map((r) => (
-                      <li key={r.id}>{r.title}</li>
+                    {matrix.lowP_highI.map((r, i) => (
+                      <li key={i}>{r.title}</li>
                     ))}
                     {matrix.lowP_highI.length === 0 && <li className="text-zinc-400">无</li>}
                   </ul>
@@ -309,8 +281,8 @@ export default function Home() {
                     高概率 · 高影响
                   </div>
                   <ul className="text-sm space-y-1">
-                    {matrix.highP_highI.map((r) => (
-                      <li key={r.id}>{r.title}</li>
+                    {matrix.highP_highI.map((r, i) => (
+                      <li key={i}>{r.title}</li>
                     ))}
                     {matrix.highP_highI.length === 0 && <li className="text-zinc-400">无</li>}
                   </ul>
@@ -334,9 +306,9 @@ export default function Home() {
                     </tr>
                   </thead>
                   <tbody>
-                    {risks.map((r) => (
+                    {risks.map((r, i) => (
                       <tr
-                        key={r.id}
+                        key={i}
                         className="border-t border-zinc-200 dark:border-zinc-700"
                       >
                         <td className="p-3 font-medium">{r.title}</td>
@@ -355,9 +327,9 @@ export default function Home() {
           </div>
         )}
 
-        {!project && !loading && (
+        {risks.length === 0 && !loading && (
           <p className="text-zinc-500 dark:text-zinc-400">
-            暂无分析结果，输入项目描述并点击 Analyze 开始。
+            输入项目描述并点击 Analyze 开始分析。
           </p>
         )}
       </div>

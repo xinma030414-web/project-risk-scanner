@@ -1,6 +1,5 @@
-import { prisma } from "@/lib/db";
 import { openai } from "@/lib/openai";
-import { scoreRisks } from "@/core/scoreEngine";
+import { scoreRisks, getSummary } from "@/core/scoreEngine";
 import { z } from "zod";
 import { NextResponse } from "next/server";
 
@@ -10,6 +9,18 @@ const RiskItemSchema = z.object({
   category: z.string(),
   probability: z.number().min(0).max(1),
   impact: z.number().min(0).max(1),
+});
+
+const RequestBodySchema = z.object({
+  description: z.string().min(1),
+  meta: z
+    .object({
+      duration_weeks: z.number().int().positive().optional(),
+      tech_complexity: z.string().optional(),
+      cross_team: z.boolean().optional(),
+      external_approval: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 const SYSTEM_PROMPT = `你是一个项目风险分析专家。根据用户给出的项目描述，生成恰好 15 条执行风险。
@@ -25,33 +36,32 @@ function sanitizeText(s: string): string {
   return trimmed.length > MAX_TEXT_LENGTH ? trimmed.slice(0, MAX_TEXT_LENGTH) : trimmed;
 }
 
-// PDF/DOCX 解析仅在前端进行，后端只接收已提取的纯文本，不使用 pdfjs
+function formatSummary(
+  top5Titles: string[],
+  levelCounts: Record<string, number>
+): string {
+  const top = top5Titles.length
+    ? `Top 5 风险：${top5Titles.join("；")}`
+    : "";
+  const levels = `等级分布：Critical ${levelCounts.Critical ?? 0}，High ${levelCounts.High ?? 0}，Medium ${levelCounts.Medium ?? 0}，Low ${levelCounts.Low ?? 0}`;
+  return [top, levels].filter(Boolean).join("。");
+}
+
 export async function POST(request: Request) {
   try {
-    const formData = await request.formData();
-    const description = (formData.get("description") as string | null)?.trim() ?? "";
-    const duration_weeksRaw = formData.get("duration_weeks");
-    const tech_complexity = (formData.get("tech_complexity") as string | null)?.trim() ?? "";
-    const cross_teamRaw = formData.get("cross_team");
-    const external_approvalRaw = formData.get("external_approval");
-
-    let duration_weeks: number | undefined;
-    if (duration_weeksRaw != null && duration_weeksRaw !== "") {
-      const n = Number(duration_weeksRaw);
-      if (Number.isInteger(n) && n > 0) duration_weeks = n;
+    const body = await request.json();
+    const parsed = RequestBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "参数无效", details: parsed.error.message },
+        { status: 400 }
+      );
     }
-    const cross_team =
-      cross_teamRaw === "true" ? true : cross_teamRaw === "false" ? false : undefined;
-    const external_approval =
-      external_approvalRaw === "true" ? true : external_approvalRaw === "false" ? false : undefined;
-
+    const { description, meta } = parsed.data;
     const sanitized = sanitizeText(description);
     if (sanitized.length < 20) {
       return NextResponse.json(
-        {
-          error: "输入过短",
-          details: "请填写项目描述和/或上传 .pdf / .docx 文件，且合并后不少于 20 字符",
-        },
+        { error: "输入过短", details: "描述不少于 20 字符" },
         { status: 400 }
       );
     }
@@ -108,23 +118,16 @@ export async function POST(request: Request) {
     }
 
     const scored = scoreRisks(riskInputs, {
-      duration_weeks: duration_weeks ?? undefined,
-      tech_complexity: tech_complexity || undefined,
+      duration_weeks: meta?.duration_weeks,
+      tech_complexity: meta?.tech_complexity,
     });
 
-    const project = await prisma.project.create({
-      data: {
-        description: sanitized,
-        duration_weeks: duration_weeks ?? null,
-        tech_complexity: tech_complexity || null,
-        cross_team: cross_team ?? null,
-        external_approval: external_approval ?? null,
-      },
-    });
+    const { top5Titles, levelCounts } = getSummary(scored);
+    const summary = formatSummary(top5Titles, levelCounts);
 
-    await prisma.risk.createMany({
-      data: scored.map((r) => ({
-        projectId: project.id,
+    const risks = scored
+      .sort((a, b) => b.score - a.score)
+      .map((r) => ({
         title: r.title,
         description: r.description,
         category: r.category,
@@ -132,15 +135,9 @@ export async function POST(request: Request) {
         impact: r.impact,
         score: r.score,
         level: r.level,
-      })),
-    });
+      }));
 
-    const risks = await prisma.risk.findMany({
-      where: { projectId: project.id },
-      orderBy: { score: "desc" },
-    });
-
-    return NextResponse.json({ project, risks });
+    return NextResponse.json({ risks, summary });
   } catch (e) {
     console.error("analyze error", e);
     return NextResponse.json(
