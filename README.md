@@ -3,11 +3,10 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 ## Project Risk Scanner – 本地运行与验证
 
 - 安装依赖：`npm install`
-- 配置环境：在项目根目录创建 `.env.local`，设置 `OPENAI_API_KEY` 和 `DATABASE_URL`（SQLite 示例：`DATABASE_URL="file:./prisma/dev.db"`）
+- 配置环境：在项目根目录创建 `.env.local`（不要提交到 Git），仅设置 `OPENAI_API_KEY=你的密钥`。无需数据库。
 - 启动：`npm run dev`，浏览器打开 [http://localhost:3000](http://localhost:3000)
 - 验证文本分析：在「项目描述」输入一段文字，点击 **Analyze**，应看到 15 条风险、Top 5、2×2 矩阵
 - 验证文件上传分析：上传 `.pdf` 或 `.docx`（可不填描述），点击 **Analyze**，应同样得到 15 条风险 + Top 5 + 2×2 矩阵
-- 验证持久化：刷新页面后仍可看到最近一次分析结果（来自 DB）
 
 ## Getting Started
 
